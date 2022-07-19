@@ -43,7 +43,7 @@ def get_player_info(playerid: str, soup: bs.BeautifulSoup = None) -> Dict:
     if not soup:
         soup = get_split_soup(playerid)
     about_info = soup.find_all(
-        "div", {"itemtype": "https://schema.org/Person"})
+        "div", {"id": "info"})
     info = [ele for ele in about_info]
     fv = []
     # This for loop goes through the player bio section at the top of the splits page to find all of the <p> tags
@@ -169,3 +169,88 @@ def get_splits(playerid: str, year: Optional[int] = None, player_info: bool = Fa
             return data, player_info_data, level_data
         else:
             return data, player_info_data
+
+
+#TODO: add data from 2021
+def get_game_logs_batter(playerid: str, year: Optional[int] = None, ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, Dict]]:
+    """
+    Returns a dataframe of all split stats for a given player.
+    If player_info is True, this will also return a dictionary that includes player position, handedness, height, weight, position, and team
+    """
+    pitch_or_bat='b'
+
+    if year is None:
+        url = f"https://www.baseball-reference.com/players/gl.fcgi?id={playerid}&t={pitch_or_bat}&year={year}"
+    else:
+        year = str(year)
+        url = f"https://www.baseball-reference.com/players/gl.fcgi?id={playerid}&t={pitch_or_bat}&year={year}"
+    html = download_url(url)
+    soup = bs.BeautifulSoup(html, 'lxml')
+    game_logs = soup.find_all("tr", {"id": re.compile('batting_gamelogs.*')})
+    data = []
+    for i in range(len(game_logs)):
+        gameSoup = game_logs[i]
+        hr = int(gameSoup.find("td", {"data-stat": "HR"}).text)
+        home_away = 'N' if gameSoup.find("td", {"data-stat": "team_homeORaway"}).text == '@' else 'Y'
+        opponent_short_name = gameSoup.find("td", {"data-stat": "opp_ID"}).text
+        pa = int(gameSoup.find("td", {"data-stat": "PA"}).text)
+        date = gameSoup.find("td", {"data-stat": "date_game"})
+        date_str = date.string
+        box_score_ref = date.contents[0].attrs['href']
+        if pa < 2: 
+            #SKIP, probably pitch hit
+            continue
+        box_score_url = f'https://www.baseball-reference.com{box_score_ref}'
+        box_score_html = download_url(box_score_url)
+        box_score_soup = bs.BeautifulSoup(box_score_html, 'lxml')
+        opponent_long_name = "div_" + _manual_matches.get(opponent_short_name)
+
+        # the tables on the bbref site are all within an embedded comment. This finds all the comments
+        box_score_comments = box_score_soup.find_all(text=lambda text: isinstance(text, bs.Comment))
+        for j in range(len(box_score_comments)):
+            commentsoup = bs.BeautifulSoup(box_score_comments[j], 'lxml')
+            tables = commentsoup.find_all(
+            "div", {"id": opponent_long_name})
+            tables_arr = [ele for ele in tables]
+            
+            if (tables_arr):
+                opp_starting_pitcher = tables_arr[0].find_all('tr')[1].find('th').attrs['data-append-csv']
+                #add data: 
+                data.append([hr, home_away, opponent_short_name, opp_starting_pitcher, date_str])
+                break
+
+    data = pd.DataFrame(data, columns=['HR', 'HOME?', 'OPP_SHORT_CODE', 'OPP_STARTING_PITCHER_BREF_ID', 'DATE'])
+    return data
+
+_manual_matches: Dict[str, str] = {
+    'MIN': 'MinnesotaTwinspitching',
+    'SEA': 'SeattleMarinerspitching',
+    'ARI': 'ArizonaDiamondbackspitching',
+    'BAL': 'BaltimoreOriolespitching',
+    'BOS': 'BostonRedSoxpitching',
+    'CHW': 'ChicagoWhiteSoxpitching',
+    'CHC': 'ChicagoCubspitching',
+    'CIN': 'CinncinnatiRedspitching',
+    'CLE': 'ClevelandGuardianspitching',
+    'ATL': 'AtlantaBravespitching',
+    'MIA': 'MiamiMarlinspitching',
+    'NYM': 'NewYorkMetspitching',
+    'PHI': 'PhiladelphiaPhilliespitching',
+    'WSN': 'WashingtonNationalspitching',
+    'MIL': 'MilwaukeeBrewerspitching',
+    'PIT': 'PittsburgPiratespitching',
+    'STL': 'StLouisCardinalspitching',
+    'COL': 'ColoradoRockiespitching',
+    'LAD': 'LosAngelesDodgerspitching',
+    'SDP': 'SanDiegoPadrespitching',
+    'SFG': 'SanFranciscoGiantspitching',
+    'NYY': 'NewYorkYankeespitching',
+    'TBR': 'TampaBayRayspitching',
+    'TOR': 'TorontoBlueJayspitching',
+    'DET': 'DetroitTigerspitching',
+    'KCR': 'KansasCityRoyalspitching',
+    'HOU': 'HoustonAstrospitching',
+    'LAA': 'LosAngelesAngelspitching',
+    'OAK': 'OaklandAthleticspitching',
+    'TEX': 'TexasRangerspitching'
+}
